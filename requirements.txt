@@ -1,0 +1,5 @@
+pyserial==3.5
+pynmea2==1.19.0
+paho-mqtt==1.6.1
+mysql-connector-python==8.0.33
+pyinstaller

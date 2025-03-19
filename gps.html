@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS Location with Leaflet and MQTT</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.2/mqttws31.min.js" type="text/javascript"></script>
+    <script src="https://cdn.tailwindcss.com"></script>  <!-- Tailwind CSS -->
+    <style>
+        /*  Minor adjustments for Leaflet container */
+        #map { height: 400px; width: 100%; }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div class="container mx-auto p-4">
+        <h1 class="text-2xl font-bold text-center mb-4">GPS Location</h1>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div id="map" class="rounded-lg shadow-md"></div>
+            <div class="bg-white p-4 rounded-lg shadow-md">
+                <h2 class="text-lg font-semibold mb-2">GPS Data</h2>
+                <p>Latitude: <span id="latitude">N/A</span></p>
+                <p>Longitude: <span id="longitude">N/A</span></p>
+                <p>Timestamp: <span id="timestamp">N/A</span></p>
+                <p>Altitude: <span id="altitude">N/A</span></p>
+                <p>Satellites: <span id="satellites">N/A</span></p>
+                <p>HDOP: <span id="hdop">N/A</span></p>
+                <p>Fix Quality: <span id="fixQuality">N/A</span></p>
+                <p>Speed (km/h): <span id="speed">N/A</span></p>
+            </div>
+        </div>
+    </div>
+
+
+
+<script>
+    // --- Leaflet Map Setup ---
+    const map = L.map('map').setView([51.505, -0.09], 2); // Default view, will be updated
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    let gpsMarker = null;  // Store the marker for updating its position
+
+    // --- MQTT Setup ---
+    const mqtt_broker = "127.0.0.1";  // Replace with your MQTT broker
+    const mqtt_port = 9001;  //  Typically 9001 for WebSocket connections over TLS.  8083 for unencrypted.
+    const mqtt_topic = "gps/location";
+
+    const client = new Paho.MQTT.Client(mqtt_broker, mqtt_port, "clientId_" + parseInt(Math.random() * 100, 10));
+    client.onConnectionLost = onConnectionLost;
+    client.onMessageArrived = onMessageArrived;
+
+
+    client.connect({
+      onSuccess: onConnect,
+      useSSL: false, // Use SSL/TLS for secure connection. Set to false if your broker doesn't support it.
+      onFailure: (error) => {
+          console.error("MQTT Connection Failed:", error);
+          // Optionally display an error message to the user
+          const errorDiv = document.createElement('div');
+          errorDiv.className = "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mt-4";
+          errorDiv.role = "alert";
+          errorDiv.innerHTML = `<strong>Connection Error:</strong> Could not connect to the MQTT broker. Check your broker address and port, and ensure your broker supports WebSockets.`;
+          document.querySelector('.container').appendChild(errorDiv);
+      }
+    });
+
+    function onConnect() {
+        console.log("Connected to MQTT Broker");
+        client.subscribe(mqtt_topic);
+    }
+
+    function onConnectionLost(responseObject) {
+        if (responseObject.errorCode !== 0) {
+            console.log("Connection Lost:", responseObject.errorMessage);
+             // Optionally display a connection lost message to the user.
+             const errorDiv = document.createElement('div');
+              errorDiv.className = "bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative mt-4";
+              errorDiv.role = "alert";
+              errorDiv.innerHTML = `<strong>Connection Lost:</strong> Lost connection to the MQTT broker.  Attempting to reconnect...`;
+              document.querySelector('.container').appendChild(errorDiv);
+        }
+    }
+
+    function onMessageArrived(message) {
+        try {
+            const data = JSON.parse(message.payloadString);
+            console.log("Received:", data);
+
+            // Update the map
+            if (data.latitude && data.longitude) {
+                const latlng = L.latLng(data.latitude, data.longitude);
+
+                if (gpsMarker) {
+                    gpsMarker.setLatLng(latlng);
+                } else {
+                    gpsMarker = L.marker(latlng).addTo(map);
+                }
+                map.setView(latlng, 15); // Zoom in when new location is received
+
+                //Update text data
+                document.getElementById('latitude').textContent = data.latitude.toFixed(6);
+                document.getElementById('longitude').textContent = data.longitude.toFixed(6);
+                 // Format timestamp for better readability
+                const timestamp = data.timestamp ? new Date(data.timestamp).toLocaleString() : 'N/A';
+                document.getElementById('timestamp').textContent = timestamp;
+                document.getElementById('altitude').textContent = data.altitude ? `${data.altitude} ${data.altitude_units || 'm'}` : 'N/A';
+                document.getElementById('satellites').textContent = data.satellites || 'N/A';
+                document.getElementById('hdop').textContent = data.hdop || 'N/A';
+                document.getElementById('fixQuality').textContent = data.fix_quality || 'N/A';
+                document.getElementById('speed').textContent = data.speed_over_ground ? data.speed_over_ground.toFixed(2) : "N/A";
+
+
+            }
+            
+        } catch (error) {
+            console.error("Error parsing JSON:", error);
+        }
+    }
+
+
+</script>
+
+</body>
+</html>
