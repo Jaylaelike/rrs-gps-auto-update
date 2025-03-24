@@ -191,7 +191,7 @@ def get_usb_port():
     if system == "Linux":
         patterns = ["/dev/ttyACM*", "/dev/ttyUSB*"]
     elif system == "Darwin":
-        patterns = ["/dev/cu.usbmodem1401"]
+        patterns = ["/dev/tty.usbmodem1401"]
     elif system == "Windows":
         patterns = ["COM*"]
     else:
@@ -339,6 +339,7 @@ class GPSApp:
         self.update_interval = tk.IntVar(value=60)  # Default 60 seconds
         self.status_var = tk.StringVar(value="Ready")
         self.gps_data_var = tk.StringVar(value="No GPS data")
+        self.use_mqtt = tk.BooleanVar(value=False)  # Default: MQTT disabled
         
         self.create_widgets()
         
@@ -346,6 +347,14 @@ class GPSApp:
         self.running = False
         self.client = None
         self.ser = None
+        
+        # Auto-start with Center ID 2
+        self.root.after(1000, self.auto_start)
+    
+    def auto_start(self):
+        """Automatically start GPS logging with Center ID 2"""
+        self.center_id.set("2")
+        self.start_gps()
     
     def create_widgets(self):
         # Main frame
@@ -368,22 +377,25 @@ class GPSApp:
         ttk.Label(main_frame, text="Update Interval (seconds):").grid(row=1, column=0, sticky=tk.W, pady=5)
         ttk.Entry(main_frame, textvariable=self.update_interval, width=10).grid(row=1, column=1, sticky=tk.W, pady=5)
         
+        # MQTT toggle
+        ttk.Checkbutton(main_frame, text="Enable MQTT", variable=self.use_mqtt).grid(row=2, column=0, sticky=tk.W, pady=5)
+        
         # Control buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=10)
         
         ttk.Button(button_frame, text="Start", command=self.start_gps).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Stop", command=self.stop_gps).pack(side=tk.LEFT, padx=5)
         
         # Status display
         status_frame = ttk.LabelFrame(main_frame, text="Status")
-        status_frame.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=10)
+        status_frame.grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=10)
         
         ttk.Label(status_frame, textvariable=self.status_var).pack(pady=5)
         
         # GPS data display
         gps_frame = ttk.LabelFrame(main_frame, text="GPS Data")
-        gps_frame.grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=10)
+        gps_frame.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=10)
         
         self.gps_text = tk.Text(gps_frame, height=10, width=50)
         self.gps_text.pack(pady=5)
@@ -450,17 +462,20 @@ class GPSApp:
             self.running = False
             return
 
-        # --- MQTT Setup ---
-        self.client = mqtt.Client()
-        self.client.on_connect = on_connect
-
-        try:
-            self.client.connect(mqtt_broker, mqtt_port, 60)
-            self.client.loop_start()
-        except Exception as e:
-            self.status_var.set(f"MQTT connection error: {e}")
-            self.running = False
-            return
+        # --- MQTT Setup (only if enabled) ---
+        if self.use_mqtt.get():
+            try:
+                self.client = mqtt.Client()
+                self.client.on_connect = on_connect
+                self.client.connect(mqtt_broker, mqtt_port, 60)
+                self.client.loop_start()
+                self.status_var.set("MQTT connected and GPS ready")
+            except Exception as e:
+                self.status_var.set(f"MQTT connection error: {e}, continuing without MQTT")
+                self.client = None
+        else:
+            self.client = None
+            self.status_var.set("Running without MQTT")
 
         # --- Serial Port Setup ---
         try:
@@ -484,7 +499,10 @@ class GPSApp:
                         if parsed_data:
                             data_str = f"Lat: {parsed_data.get('latitude', 'N/A')}, Lon: {parsed_data.get('longitude', 'N/A')}"
                             self.update_gps_display(data_str)
-                            self.client.publish(mqtt_topic, json.dumps(parsed_data))
+                            
+                            # Publish to MQTT only if enabled and connected
+                            if self.client and self.use_mqtt.get():
+                                self.client.publish(mqtt_topic, json.dumps(parsed_data))
 
                             # --- MySQL Update Logic ---
                             now = datetime.now()
@@ -508,7 +526,7 @@ class GPSApp:
                 self.client.loop_stop()
                 self.client.disconnect()
             self.status_var.set("Disconnected")
-            self.running = False
+            self.running = False       
 
 def main():
     """Launch the GPS application."""
